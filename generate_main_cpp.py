@@ -13,8 +13,8 @@ def generate_main_cpp(directory, top_model_name, simulation_time):
         top_model_name (str):   The name of the top model, which is used to start the simulation.
         simulation_time (str):  The number of seconds the simulation will run for.
     '''
-    type_of_logger = 'STDOUTLogger'
-    #type_of_logger = 'CSVLogger'
+    type_of_logger = 'CSVLogger'
+    #type_of_logger = 'STDOUTLogger'
     output_filepath = directory + "main.cpp"
     with open(output_filepath, 'w') as file:
         file.write(write_main_cpp_top_of_file_for_simulation(top_model_name))

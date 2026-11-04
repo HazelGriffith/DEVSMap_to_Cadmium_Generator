@@ -270,7 +270,7 @@ def generate_class_constructor(model_name, state_name, input_ports, output_ports
         output_ports (dict):    The DEVSMap dictionary data for the atomic model's input ports, 
                                 given by model_name['y']
     '''   
-    port_initializations = '\t' + model_name + '(const std::string id) : Atomic<' + state_name + '>(id, ' + state_name + '()) {\n'
+    port_initializations = '\t' + model_name + '(const std::string id, const ' + state_name + '& initialState) : Atomic<' + state_name + '>(id, initialState) {\n'
     
     # input ports
     port_initializations += '\t\t//input ports\n'
