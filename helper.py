@@ -48,7 +48,7 @@ def build_conditional_statements(data, list_of_state_variables):
     #print(data)
     #print(list_of_state_variables)
     conditional_statements = ''
-    if len(data) == 1:
+    if len(data) == 1 and 'otherwise' in data:
         data = data['otherwise']
         if len(data) == 0:
             return '\t\t// Not implemented\n'

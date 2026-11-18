@@ -195,10 +195,10 @@ def generate_bitshift_override_function(state_name, model):
     
 def generate_class(model_name, state_name, model):
     '''
-    #TODO confluent function is a later item
-    Returns the C++ class definition for the atomic model being generated.  This includes 
-    the port declarations, class constructor, internal transition function, external 
-    transition function, output function, and time advance function.
+    Returns the C++ class definition for the atomic model being generated.  This includes
+    the port declarations, class constructor, internal transition function, external
+    transition function, confluent transition function (only when delta_con defines one),
+    output function, and time advance function.
 
     Args:
         model_name (str):   The name of the atomic model being generated.
@@ -213,7 +213,7 @@ def generate_class(model_name, state_name, model):
     output_ports = model['y']
     delta_int = model['delta_int']
     delta_ext = model['delta_ext']
-    #delta_con = model['delta_con'] # not implemented
+    delta_con = model.get('delta_con')
     lambda_func = model['lambda'] # lambda is a python keyword and cannot be used
     ta = model['ta']
     
@@ -224,7 +224,7 @@ def generate_class(model_name, state_name, model):
     #print(ta)
     
     class_definition = 'class ' + model_name + ' : public Atomic<' + state_name + '> {\n'
-    class_definition += generate_port_declarations(input_ports, output_ports) + generate_class_constructor(model_name, state_name, input_ports, output_ports) + generate_internal_transition(state_name, delta_int, list_of_state_variables) + generate_external_transition(state_name, delta_ext, list_of_state_variables) + generate_output_function(state_name, lambda_func, list_of_state_variables) + generate_time_advance_function(state_name, ta, list_of_state_variables)
+    class_definition += generate_port_declarations(input_ports, output_ports) + generate_class_constructor(model_name, state_name, input_ports, output_ports) + generate_internal_transition(state_name, delta_int, list_of_state_variables) + generate_external_transition(state_name, delta_ext, list_of_state_variables) + generate_confluent_transition(state_name, delta_con, list_of_state_variables) + generate_output_function(state_name, lambda_func, list_of_state_variables) + generate_time_advance_function(state_name, ta, list_of_state_variables)
     class_definition += '};\n\n'
     
     return class_definition
@@ -308,8 +308,6 @@ def generate_internal_transition(state_name, delta_int, list_of_state_variables)
 
 def generate_external_transition(state_name, delta_ext, list_of_state_variables):
     '''
-    # TODO refactor this to use a helper function, so it is structured like the generate_internal_transition() above
-
     Returns the external transition function for the atomic model being generated.
 
     Args:
@@ -320,12 +318,44 @@ def generate_external_transition(state_name, delta_ext, list_of_state_variables)
                                                 atomic_model['s'].items()
     '''
     external_transition_function = '\tvoid externalTransition(' + state_name + '& state, double e) const override {\n'
-    
-    conditional_statements = build_conditional_statements(delta_ext, list_of_state_variables)
-    external_transition_body = ''
-    
-    # Go through the if/else structure and convert JSON bag operators to the correct C++ functions and syntax
-    for line in conditional_statements.splitlines(True): # True keeps the linebreaks in
+    external_transition_function += build_input_transition_body(delta_ext, list_of_state_variables)
+    external_transition_function += '\t}\n\n'
+    return external_transition_function
+
+
+def generate_confluent_transition(state_name, delta_con, list_of_state_variables):
+    '''
+    Returns the confluent transition function for the atomic model being generated, or nothing when
+    delta_con is missing or {"otherwise": {}}, so that Cadmium's default (the internal transition,
+    then the external transition) applies.
+
+    Args:
+        state_name (str):                       The name of the atomic model's state object.
+        delta_con (dict):                       The DEVSMap dictionary data for the confluent transition function,
+                                                given by model_name['delta_con']
+        list_of_state_variables (dict_items):   The list of state variables of the atomic model, returned by
+                                                atomic_model['s'].items()
+    '''
+    if not delta_con or delta_con == {'otherwise': {}}:
+        return ''
+    confluent_transition_function = '\tvoid confluentTransition(' + state_name + '& state, double e) const override {\n'
+    confluent_transition_function += build_input_transition_body(delta_con, list_of_state_variables)
+    confluent_transition_function += '\t}\n\n'
+    return confluent_transition_function
+
+
+def build_input_transition_body(data, list_of_state_variables):
+    '''
+    Returns the body of a transition function that reads input bags (external or confluent),
+    with the JSON bag operators converted to the correct C++ functions and syntax.
+
+    Args:
+        data (dict):                            The DEVSMap dictionary data for the transition function.
+        list_of_state_variables (dict_items):   The list of state variables of the atomic model, returned by
+                                                atomic_model['s'].items()
+    '''
+    body = ''
+    for line in build_conditional_statements(data, list_of_state_variables).splitlines(True): # True keeps the linebreaks in
         # remove tabs to check what the line starts with
         templine = line.lstrip('\t')
         # if the line is building the condition, we are making changes based on the bag size
@@ -334,19 +364,14 @@ def generate_external_transition(state_name, delta_ext, list_of_state_variables)
             line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) != 0', r'!\1->empty()', line)
             # replaces "variable_name.bagSize() == 0" with variable_name->empty()
             line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) == 0', r'\1->empty()', line)
-            external_transition_body += line            
         # if the line is an instruction, we are making changes based on getting the last value from the bag
         else:
             # replaces "variablename.bag(-1)" with "variablename->getBag().back()"
             line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\(-1\)', r'\1->getBag().back()', line)
             # replaces "variablename.bag(i)" for a non-negative integer i with "variablename->getBag()[i]"
             line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\((\d+)\)', r'\1->getBag()[\2]', line)
-            external_transition_body += line
-            
-    external_transition_function += external_transition_body    
-    
-    external_transition_function += '\t}\n\n'
-    return external_transition_function
+        body += line
+    return body
 
 
 def generate_output_function(state_name, lambda_func, list_of_state_variables):
