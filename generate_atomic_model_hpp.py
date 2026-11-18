@@ -339,6 +339,8 @@ def generate_external_transition(state_name, delta_ext, list_of_state_variables)
         else:
             # replaces "variablename.bag(-1)" with "variablename->getBag().back()"
             line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\(-1\)', r'\1->getBag().back()', line)
+            # replaces "variablename.bag(i)" for a non-negative integer i with "variablename->getBag()[i]"
+            line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\((\d+)\)', r'\1->getBag()[\2]', line)
             external_transition_body += line
             
     external_transition_function += external_transition_body    
