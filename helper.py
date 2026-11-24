@@ -1,3 +1,6 @@
+import re
+
+
 # C++ types of the DEVSMap basic sets; any other set name (a struct) is its own C++ type
 CPP_TYPES = {
     'floating_point': 'double',
@@ -7,6 +10,9 @@ CPP_TYPES = {
     'char': 'char',
     'string': 'std::string',
 }
+
+# A string literal, a number, an identifier, a two-character operator, whitespace, or any other character
+TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\d[\w.]*|[A-Za-z_]\w*|->|::|&&|\|\||[=!<>]=|\s+|.')
 
 
 def cpp_type(domain):
@@ -19,24 +25,50 @@ def cpp_type(domain):
     return CPP_TYPES.get(domain, domain)
 
 
-def prefix_states(text, list_of_state_variables):
+def translate_expression(expression, list_of_state_variables=()):
     '''
-    Replaces each instance of "variable" by "state.variable" in text, when "variable" is followed 
-    by a space or semicolon.  This restriction prevents replacing substrings that are not 
-    state variables (For example, we would avoid replacing "targetnumber" by "targetstate.number" 
-    if there was also a state variable called "number"). This replacement occurs for all state 
-    variables in list_of_state_variables.
+    Returns a DEVSMap expression in C++ syntax, where state variables become "state.variable"
+    (whole names only, never inside a string literal or after ".", "->" or "::").
 
     Args:
-        text (str):                             The input text which we are requiring to prefix the 
-                                                state variable names with "state."
-        list_of_state_variables (dict_items):   The list of state variables of the atomic model, returned by 
-                                                atomic_model['s'].items()
+        expression (str):                       The DEVSMap expression.
+        list_of_state_variables (list):         The state variable names of the atomic model, if any.
     '''
-    for state_variable in list_of_state_variables:
-        text = text.replace(state_variable + ' ', 'state.' + state_variable + ' ')
-        text = text.replace(state_variable + ';', 'state.' + state_variable + ';')
-    return text
+    tokens = TOKEN.findall(expression)
+    for i, token in enumerate(tokens):
+        previous = neighbour(tokens, i, -1)
+        if previous in ('.', '->', '::'):
+            continue
+        if token in list_of_state_variables:
+            tokens[i] = 'state.' + token
+    return ''.join(tokens)
+
+
+def neighbour(tokens, i, step):
+    '''
+    Returns the nearest token before (step -1) or after (step 1) tokens[i] that is not whitespace.
+    '''
+    i += step
+    while 0 <= i < len(tokens) and tokens[i].isspace():
+        i += step
+    return tokens[i] if 0 <= i < len(tokens) else None
+
+
+def translate_map(data, list_of_state_variables):
+    '''
+    Returns a DEVSMap condition map (or the body of one of its branches) with every condition,
+    assigned name and value translated to C++ by translate_expression().
+
+    Args:
+        data (dict):                            The DEVSMap dictionary to translate.
+        list_of_state_variables (list):         The state variable names of the atomic model.
+    '''
+    return {
+        key if key == 'otherwise' else translate_expression(key, list_of_state_variables):
+        translate_map(value, list_of_state_variables) if isinstance(value, dict)
+        else translate_expression(value, list_of_state_variables)
+        for key, value in data.items()
+    }
 
 
 def build_conditional_statements(data, list_of_state_variables):
@@ -46,8 +78,8 @@ def build_conditional_statements(data, list_of_state_variables):
     In Cadmium, this is used to generate the bodies of the internal transition function, external 
     transition function, confluent function, output function, etc.
 
-    This function uses the prefix_states() function to ensure that all state variables are properly
-    syntaxed in C++, meaning they are of the form "state.variable_name".
+    This function uses the translate_map() function to turn every condition and assignment into
+    C++, with all state variables of the form "state.variable_name".
 
     Possible cases are listed below:
 
@@ -68,6 +100,7 @@ def build_conditional_statements(data, list_of_state_variables):
     '''
     #print(data)
     #print(list_of_state_variables)
+    data = translate_map(data, list_of_state_variables)
     conditional_statements = ''
     if len(data) == 1 and 'otherwise' in data:
         data = data['otherwise']
@@ -79,7 +112,7 @@ def build_conditional_statements(data, list_of_state_variables):
             conditional_statements += simple_conditional_statement(key, data[key])
     else:
         conditional_statements = build_conditional_statements_helper(data)
-    return prefix_states(conditional_statements, list_of_state_variables)
+    return conditional_statements
 
 
 def simple_conditional_statement(key, value):
