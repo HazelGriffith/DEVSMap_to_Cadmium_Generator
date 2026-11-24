@@ -34,6 +34,7 @@ def generate_atomic_model(directory, init_states, atomic_model_name, atomic_mode
     with open(output_filepath, 'w') as file:
         file.write(generate_file_definition(atomic_model_name))
         file.write(include_iostream())
+        file.write(include_expression_libraries())
         file.write(include_atomic())
         file.write(cadmium_namespace())
         file.write(generate_state_struct(init_states, state_name, atomic_model))
@@ -48,6 +49,14 @@ def include_iostream():
     Returns the C++ statement to include the 'iostream' library.
     '''
     return "#include <iostream>\n"
+
+
+def include_expression_libraries():
+    '''
+    Returns the C++ statements to include the libraries that translated expressions use
+    (std::array, std::numeric_limits and std::string).
+    '''
+    return "#include <array>\n#include <limits>\n#include <string>\n"
 
     
 def include_atomic():
@@ -144,14 +153,13 @@ def generate_state_struct_no_parameters(init_states, state_name, model):
     
     initializations = ''
     for variable_name, variable_type in state_variables:
-        value = initialization_values[variable_name]
+        value = translate_expression(initialization_values[variable_name])
 
         initializations += ' ' + variable_name + '(' + value + '), '
     
     state_struct += initializations.rstrip(', ')
     
     state_struct += ' {\n\t}\n};\n\n'
-    state_struct = replace_inf(state_struct)
     
     return state_struct  
 
@@ -302,7 +310,6 @@ def generate_internal_transition(state_name, delta_int, list_of_state_variables)
     internal_transition_function = '\tvoid internalTransition(' + state_name + '& state) const override {\n'
     internal_transition_function += build_conditional_statements(delta_int, list_of_state_variables)
     internal_transition_function += '\t}\n\n'
-    internal_transition_function = replace_inf(internal_transition_function)
     return internal_transition_function
 
 

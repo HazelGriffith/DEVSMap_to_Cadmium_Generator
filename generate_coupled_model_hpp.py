@@ -1,7 +1,8 @@
 # TODO module comments
 
-from generate_simple_statements import generate_file_definition, cadmium_namespace, replace_inf
+from generate_simple_statements import generate_file_definition, cadmium_namespace
 from generate_atomic_model_hpp import get_state_name
+from helper import translate_expression
 
 
 def generate_coupled_models(directory_cpp_code, data):
@@ -132,5 +133,5 @@ def generate_component_state(model_name, model_id, init_state):
     state_variable = model_id + '_state'
     statements = '\t\t' + get_state_name(model_name) + ' ' + state_variable + ';\n'
     for variable_name, value in init_state.items():
-        statements += '\t\t' + state_variable + '.' + variable_name + ' = ' + value + ';\n'
-    return replace_inf(statements)
+        statements += '\t\t' + state_variable + '.' + variable_name + ' = ' + translate_expression(value) + ';\n'
+    return statements

@@ -1,5 +1,7 @@
 import re
 
+from generate_simple_statements import infinity
+
 
 # C++ types of the DEVSMap basic sets; any other set name (a struct) is its own C++ type
 CPP_TYPES = {
@@ -14,6 +16,9 @@ CPP_TYPES = {
 # A string literal, a number, an identifier, a two-character operator, whitespace, or any other character
 TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\d[\w.]*|[A-Za-z_]\w*|->|::|&&|\|\||[=!<>]=|\s+|.')
 
+# Operators that bind looser than "+", so they end a string concatenation
+CONCATENATION_BOUNDARIES = {',', ';', '=', '==', '!=', '<', '>', '<=', '>=', '&&', '||', '?', ':', '!'}
+
 
 def cpp_type(domain):
     '''
@@ -27,20 +32,32 @@ def cpp_type(domain):
 
 def translate_expression(expression, list_of_state_variables=()):
     '''
-    Returns a DEVSMap expression in C++ syntax, where state variables become "state.variable"
-    (whole names only, never inside a string literal or after ".", "->" or "::").
+    Returns a DEVSMap expression in C++ syntax:
+    - state variables become "state.variable" (whole names only, never inside a string literal
+      or after ".", "->" or "::"),
+    - inf and nan become std::numeric_limits values,
+    - an array literal [a, b, c] becomes a pointer to its elements, as C++ array parameters expect,
+    - "text" + x + ... becomes a std::string concatenation with std::to_string(x).
 
     Args:
         expression (str):                       The DEVSMap expression.
         list_of_state_variables (list):         The state variable names of the atomic model, if any.
     '''
-    tokens = TOKEN.findall(expression)
+    tokens = concatenate_strings(TOKEN.findall(expression))
     for i, token in enumerate(tokens):
         previous = neighbour(tokens, i, -1)
         if previous in ('.', '->', '::'):
             continue
         if token in list_of_state_variables:
             tokens[i] = 'state.' + token
+        elif token == 'inf':
+            tokens[i] = infinity()
+        elif token == 'nan':
+            tokens[i] = 'std::numeric_limits<double>::quiet_NaN()'
+        elif token == '[':
+            tokens[i] = 'std::array{'
+        elif token == ']':
+            tokens[i] = '}.data()'
     return ''.join(tokens)
 
 
@@ -52,6 +69,81 @@ def neighbour(tokens, i, step):
     while 0 <= i < len(tokens) and tokens[i].isspace():
         i += step
     return tokens[i] if 0 <= i < len(tokens) else None
+
+
+def concatenate_strings(tokens):
+    '''
+    Returns tokens with each chain of "+" operands that holds a string literal rewritten as a
+    std::string concatenation: std::string("text") + std::to_string(x) + "s".
+
+    Args:
+        tokens (list):  The tokens of one expression.
+    '''
+    i = 0
+    while i < len(tokens):
+        if tokens[i].startswith('"') and '+' in (neighbour(tokens, i, -1), neighbour(tokens, i, 1)):
+            start, end = concatenation_bounds(tokens, i)
+            joined = []
+            for k, operand in enumerate(split_operands(tokens[start:end])):
+                if k > 0:
+                    joined += [' ', '+', ' ']
+                if len(operand) != 1 or not operand[0].startswith('"'):
+                    joined += ['std::to_string(', *operand, ')']
+                elif k == 0:
+                    joined += ['std::string(', *operand, ')']
+                else:
+                    joined += operand
+            tokens[start:end] = joined
+            i = start + len(joined)
+        else:
+            i += 1
+    return tokens
+
+
+def concatenation_bounds(tokens, i):
+    '''
+    Returns (start, end) of the "+" chain that holds tokens[i], at the bracket depth of tokens[i].
+    '''
+    bounds = []
+    for step, opening, closing in ((-1, {')', ']'}, {'(', '['}), (1, {'(', '['}, {')', ']'})):
+        depth, j = 0, i
+        while 0 <= j + step < len(tokens):
+            token = tokens[j + step]
+            if token in opening:
+                depth += 1
+            elif token in closing:
+                if depth == 0:
+                    break
+                depth -= 1
+            elif depth == 0 and token in CONCATENATION_BOUNDARIES:
+                break
+            j += step
+        while tokens[j].isspace():
+            j -= step
+        bounds.append(j)
+    return bounds[0], bounds[1] + 1
+
+
+def split_operands(tokens):
+    '''
+    Returns the operands of a "+" chain, each a list of tokens without surrounding whitespace.
+    '''
+    operands, depth = [[]], 0
+    for token in tokens:
+        if token in ('(', '['):
+            depth += 1
+        elif token in (')', ']'):
+            depth -= 1
+        if token == '+' and depth == 0:
+            operands.append([])
+        else:
+            operands[-1].append(token)
+    for operand in operands:
+        while operand and operand[0].isspace():
+            operand.pop(0)
+        while operand and operand[-1].isspace():
+            operand.pop()
+    return operands
 
 
 def translate_map(data, list_of_state_variables):

@@ -43,24 +43,6 @@ def infinity():
     return 'std::numeric_limits<double>::infinity()'
 
 
-def replace_inf(text):
-    '''
-    Replaces all instances of '(inf)' and ' inf;' in the text parameter with the 
-    appropriate C++ syntax for infinity. Note that this function uses extra specific 
-    strings to avoid destroying state variables that may include the substring "inf".
-
-    Args:
-        text (str):     The text to search and replace 'inf' with 
-                        'std::numeric_limits<double>::infinity()'
-    '''
-    # replace inf in an atomic model constructor
-    text = text.replace("(inf)", "(" + infinity() + ")")
-    # replace for other cases, such as in the body of an internal transition function
-    text = text.replace(" inf;", " " + infinity() + ";")
-    return text
-
-
-
 def get_simulation_time_in_seconds(experiment_file):
     '''
     Returns the number of seconds that the Cadmium simulation will run for.
