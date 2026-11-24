@@ -16,6 +16,9 @@ CPP_TYPES = {
 # A string literal, a number, an identifier, a two-character operator, whitespace, or any other character
 TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\d[\w.]*|[A-Za-z_]\w*|->|::|&&|\|\||[=!<>]=|\s+|.')
 
+# Operators after which a name is a member of something else, not a variable
+QUALIFIERS = {'.', '->', '::'}
+
 # Operators that bind looser than "+", so they end a string concatenation
 CONCATENATION_BOUNDARIES = {',', ';', '=', '==', '!=', '<', '>', '<=', '>=', '&&', '||', '?', ':', '!'}
 
@@ -45,8 +48,7 @@ def translate_expression(expression, list_of_state_variables=()):
     '''
     tokens = concatenate_strings(TOKEN.findall(expression))
     for i, token in enumerate(tokens):
-        previous = neighbour(tokens, i, -1)
-        if previous in ('.', '->', '::'):
+        if neighbour(tokens, i, -1) in QUALIFIERS:
             continue
         if token in list_of_state_variables:
             tokens[i] = 'state.' + token
@@ -216,7 +218,7 @@ def branch_statements(data, indent=2):
     '''
     Returns the C++ statements of a translated condition map or of one of its branches: a map
     with only "otherwise" is just that branch, any other map (a nested one too) becomes if-else
-    blocks, and a branch of assignments becomes one statement per assignment.
+    blocks, and a branch of assignments becomes assignment_statements().
 
     Args:
         data (dict):    The translated condition map or branch.
@@ -226,7 +228,44 @@ def branch_statements(data, indent=2):
         return branch_statements(data['otherwise'], indent)
     if any(isinstance(value, dict) for value in data.values()):
         return build_conditional_statements_helper(data, indent)
-    return ''.join(simple_conditional_statement(key, value, indent) for key, value in data.items())
+    return assignment_statements(data, indent)
+
+
+def assignment_statements(assignments, indent=2):
+    '''
+    Returns the C++ statements of a branch of assignments, which all happen at once. When a value
+    reads a state variable that another assignment of the branch sets, every value is first
+    computed into a temporary of that variable's type and only then assigned, so that each value
+    reads the state before the transition.
+
+    Args:
+        assignments (dict):     The translated assignments {name: value} of the branch.
+        indent (int):           The number of indentations.
+    '''
+    state_variables = [name for name in assignments if name.startswith('state.')]
+    if not any(reads(value, name) for target, value in assignments.items()
+               for name in state_variables if name != target):
+        return ''.join(simple_conditional_statement(name, value, indent) for name, value in assignments.items())
+    temporaries = {name: 'next_' + name.removeprefix('state.') for name in assignments}
+    computed = ''.join(simple_conditional_statement('decltype(' + name + ') ' + temporaries[name], value, indent + 1)
+                       for name, value in assignments.items())
+    assigned = ''.join(simple_conditional_statement(name, temporary, indent + 1)
+                       for name, temporary in temporaries.items())
+    return '\t' * indent + '{\n' + computed + assigned + '\t' * indent + '}\n'
+
+
+def reads(expression, name):
+    '''
+    Returns whether a translated expression reads the variable name (for example "state.x"): the
+    whole name, outside string literals, and not as a member of something else.
+
+    Args:
+        expression (str):   The translated expression.
+        name (str):         The translated variable name.
+    '''
+    tokens, target = TOKEN.findall(expression), TOKEN.findall(name)
+    return any(tokens[i:i + len(target)] == target and neighbour(tokens, i, -1) not in QUALIFIERS
+               for i in range(len(tokens)))
 
 
 def simple_conditional_statement(key, value, indent=2):
