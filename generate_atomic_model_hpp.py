@@ -244,7 +244,7 @@ def generate_port_declarations(input_ports, output_ports):
     # after implementing "constants"/DEVS parameters.
     NOTE: This function is intentionally inefficient for readability purposes.
 
-    Returns C++ code to declare all of the input and output ports for the atomic model being generated.
+    Returns C++ code to declare all of the input and output ports for the model (atomic or coupled) being generated.
     
     Args:
         input_ports (dict):     The DEVSMap dictionary data for the atomic model's input ports, 
@@ -278,21 +278,34 @@ def generate_class_constructor(model_name, state_name, input_ports, output_ports
         output_ports (dict):    The DEVSMap dictionary data for the atomic model's input ports, 
                                 given by model_name['y']
     '''   
-    port_initializations = '\t' + model_name + '(const std::string id, const ' + state_name + '& initialState) : Atomic<' + state_name + '>(id, initialState) {\n'
-    
+    constructor = '\t' + model_name + '(const std::string id, const ' + state_name + '& initialState) : Atomic<' + state_name + '>(id, initialState) {\n'
+    constructor += generate_port_registrations(input_ports, output_ports)
+    constructor += '\t}\n\n'
+    return constructor
+
+
+def generate_port_registrations(input_ports, output_ports):
+    '''
+    Returns the C++ constructor statements that register the input and output ports of a model
+    (atomic or coupled) with Cadmium.
+
+    Args:
+        input_ports (dict):     The DEVSMap dictionary data for the model's input ports,
+                                given by model_name['x']
+        output_ports (dict):    The DEVSMap dictionary data for the model's output ports,
+                                given by model_name['y']
+    '''
     # input ports
-    port_initializations += '\t\t//input ports\n'
+    port_initializations = '\t\t//input ports\n'
     for port_name in input_ports:
         data_type = cpp_type(input_ports[port_name])
-        port_initializations += '\t\t' + port_name + ' = addInPort<' + data_type + '>("' + port_name + '");\n'    
-    
+        port_initializations += '\t\t' + port_name + ' = addInPort<' + data_type + '>("' + port_name + '");\n'
+
     # output ports
     port_initializations += '\n\t\t//output ports\n'
     for port_name in output_ports:
         data_type = cpp_type(output_ports[port_name])
         port_initializations += '\t\t' + port_name + ' = addOutPort<' + data_type + '>("' + port_name + '");\n'
-    
-    port_initializations += '\t}\n\n'
     return port_initializations
 
 

@@ -1,7 +1,7 @@
 # TODO module comments
 
 from generate_simple_statements import generate_file_definition, cadmium_namespace
-from generate_atomic_model_hpp import get_state_name
+from generate_atomic_model_hpp import get_state_name, generate_port_declarations, generate_port_registrations
 from helper import translate_expression
 
 
@@ -79,8 +79,8 @@ def include_component_models(coupled_model):
 
 def generate_coupled_model_struct(init_states, model_name, model):
     '''
-    Returns the C++ struct for a coupled model in Cadmium. The struct contains component declarations
-    and internal coupling between the coupled model's atomic models.
+    Returns the C++ struct for a coupled model in Cadmium. The struct contains the coupled model's ports,
+    component declarations, and the external input, external output and internal couplings.
 
     Args:
         init_states (dict): The DEVSMap dictionary init states data for all models.
@@ -91,8 +91,10 @@ def generate_coupled_model_struct(init_states, model_name, model):
     constructor = ''
     
     # struct header
-    constructor += 'struct ' + model_name + ' : public Coupled {\n\n'
+    constructor += 'struct ' + model_name + ' : public Coupled {\n'
+    constructor += generate_port_declarations(model['x'], model['y'])
     constructor += '\t' + model_name + '(const std::string& id) : Coupled(id) {\n'
+    constructor += generate_port_registrations(model['x'], model['y']) + '\n'
 
     # addComponent statements
     components = get_components(model)
@@ -109,14 +111,26 @@ def generate_coupled_model_struct(init_states, model_name, model):
         
     #addCoupling statements
     coupling_statements = ''
+    for coupling in model['eic']:
+        coupling_statements += generate_coupling(coupling['port_from'], coupling['component_to'] + '->' + coupling['port_to'])
+    for coupling in model['eoc']:
+        coupling_statements += generate_coupling(coupling['component_from'] + '->' + coupling['port_from'], coupling['port_to'])
     for coupling in model['ic']:
-        coupling_statements += '\t\taddCoupling(' + coupling['component_from'] + '->' + coupling['port_from'] + ', ' + coupling['component_to'] + '->' + coupling['port_to'] + ');\n'
+        coupling_statements += generate_coupling(coupling['component_from'] + '->' + coupling['port_from'], coupling['component_to'] + '->' + coupling['port_to'])
     constructor += coupling_statements
     
     # close struct
     constructor += '\t}\n};\n\n'
 
     return constructor
+
+
+def generate_coupling(port_from, port_to):
+    '''
+    Returns the C++ statement that couples port_from to port_to. A port of the coupled model
+    itself is its bare name; a port of a component is "component->port".
+    '''
+    return '\t\taddCoupling(' + port_from + ', ' + port_to + ');\n'
 
 
 def generate_component_state(model_name, model_id, init_state):
