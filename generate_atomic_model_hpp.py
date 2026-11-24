@@ -134,7 +134,7 @@ def generate_state_struct_no_parameters(init_states, state_name, model):
     
     declarations = ''
     for variable_name, variable_type in state_variables:
-        declarations += '\t' + variable_type + ' ' + variable_name + ';\n'
+        declarations += '\t' + cpp_type(variable_type) + ' ' + variable_name + ';\n'
     state_struct += declarations
     
     state_struct += '\n\texplicit ' + state_name + '(): '
@@ -248,12 +248,12 @@ def generate_port_declarations(input_ports, output_ports):
     # input ports
     port_declarations += '\t//input ports\n'
     for port_name in input_ports:
-        data_type = input_ports[port_name]
+        data_type = cpp_type(input_ports[port_name])
         port_declarations += '\tPort<' + data_type + '> ' + port_name + ';\n'
     # output ports
     port_declarations += '\n\t//output ports\n'
     for port_name in output_ports:
-        data_type = output_ports[port_name]
+        data_type = cpp_type(output_ports[port_name])
         port_declarations += '\tPort<' + data_type + '> ' + port_name + ';\n'
     return port_declarations + '\n'
 
@@ -275,13 +275,13 @@ def generate_class_constructor(model_name, state_name, input_ports, output_ports
     # input ports
     port_initializations += '\t\t//input ports\n'
     for port_name in input_ports:
-        data_type = input_ports[port_name]
+        data_type = cpp_type(input_ports[port_name])
         port_initializations += '\t\t' + port_name + ' = addInPort<' + data_type + '>("' + port_name + '");\n'    
     
     # output ports
     port_initializations += '\n\t\t//output ports\n'
     for port_name in output_ports:
-        data_type = output_ports[port_name]
+        data_type = cpp_type(output_ports[port_name])
         port_initializations += '\t\t' + port_name + ' = addOutPort<' + data_type + '>("' + port_name + '");\n'
     
     port_initializations += '\t}\n\n'

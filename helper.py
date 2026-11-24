@@ -1,3 +1,24 @@
+# C++ types of the DEVSMap basic sets; any other set name (a struct) is its own C++ type
+CPP_TYPES = {
+    'floating_point': 'double',
+    'integer': 'int',
+    'unsigned_integer': 'unsigned int',
+    'boolean': 'bool',
+    'char': 'char',
+    'string': 'std::string',
+}
+
+
+def cpp_type(domain):
+    '''
+    Returns the C++ type of a DEVSMap set name.
+
+    Args:
+        domain (str):   The set name of a port or state variable (for example "floating_point").
+    '''
+    return CPP_TYPES.get(domain, domain)
+
+
 def prefix_states(text, list_of_state_variables):
     '''
     Replaces each instance of "variable" by "state.variable" in text, when "variable" is followed 
