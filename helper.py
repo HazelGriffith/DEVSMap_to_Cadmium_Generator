@@ -206,21 +206,27 @@ def build_conditional_statements(data, list_of_state_variables):
         list_of_state_variables (dict_items):   The list of state variables for the atomic model currently 
                                                 being generated.  This is returned by atomic_model['s'].items().
     '''
-    #print(data)
-    #print(list_of_state_variables)
     data = translate_map(data, list_of_state_variables)
-    conditional_statements = ''
-    if len(data) == 1 and 'otherwise' in data:
-        data = data['otherwise']
-        if len(data) == 0:
-            return '\t\t// Not implemented\n'
-        for key in data:
-            #print(key)
-            #print(data)
-            conditional_statements += simple_conditional_statement(key, data[key])
-    else:
-        conditional_statements = build_conditional_statements_helper(data)
-    return conditional_statements
+    if data == {'otherwise': {}}:
+        return '\t\t// Not implemented\n'
+    return branch_statements(data)
+
+
+def branch_statements(data, indent=2):
+    '''
+    Returns the C++ statements of a translated condition map or of one of its branches: a map
+    with only "otherwise" is just that branch, any other map (a nested one too) becomes if-else
+    blocks, and a branch of assignments becomes one statement per assignment.
+
+    Args:
+        data (dict):    The translated condition map or branch.
+        indent (int):   The number of indentations.
+    '''
+    if list(data) == ['otherwise']:
+        return branch_statements(data['otherwise'], indent)
+    if any(isinstance(value, dict) for value in data.values()):
+        return build_conditional_statements_helper(data, indent)
+    return ''.join(simple_conditional_statement(key, value, indent) for key, value in data.items())
 
 
 def simple_conditional_statement(key, value, indent=2):
@@ -270,13 +276,7 @@ def build_conditional_statements_helper(data, indent=2):
 
         # Write the body of the block
         if isinstance(value, dict):
-            # If all values are non-dictionaries, write assignments
-            if all(not isinstance(v, dict) for v in value.values()):
-                for var, expr in value.items():
-                    conditions += simple_conditional_statement(var, expr, indent + 1)
-            else:
-                # Otherwise, recursively handle nested conditions
-                conditions += write_conditions(value, indent + 1)
+            conditions += branch_statements(value, indent + 1)
         else:
             # Single assignment if value is not a dict
             conditions += simple_conditional_statement(key, value, indent + 1)
@@ -293,5 +293,5 @@ def build_conditional_statements_helper(data, indent=2):
             # Last block: close normally
             conditions += INDENT * indent + '}\n'
             #Remove the else block if it is empty
-            conditions = conditions.replace(' else {\n\t\t}\n', '\n')
+            conditions = conditions.replace(' else {\n' + INDENT * indent + '}\n', '\n')
             return conditions
