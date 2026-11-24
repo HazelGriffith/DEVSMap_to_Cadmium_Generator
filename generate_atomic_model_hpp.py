@@ -34,6 +34,7 @@ def generate_atomic_model(directory, init_states, atomic_model_name, atomic_mode
     with open(output_filepath, 'w') as file:
         file.write(generate_file_definition(atomic_model_name))
         file.write(include_iostream())
+        file.write(include_expression_libraries())
         file.write(include_atomic())
         file.write(cadmium_namespace())
         file.write(generate_state_struct(init_states, state_name, atomic_model))
@@ -48,6 +49,14 @@ def include_iostream():
     Returns the C++ statement to include the 'iostream' library.
     '''
     return "#include <iostream>\n"
+
+
+def include_expression_libraries():
+    '''
+    Returns the C++ statements to include the libraries that translated expressions use
+    (std::array, std::numeric_limits and std::string).
+    '''
+    return "#include <array>\n#include <limits>\n#include <string>\n"
 
     
 def include_atomic():
@@ -134,7 +143,7 @@ def generate_state_struct_no_parameters(init_states, state_name, model):
     
     declarations = ''
     for variable_name, variable_type in state_variables:
-        declarations += '\t' + variable_type + ' ' + variable_name + ';\n'
+        declarations += '\t' + cpp_type(variable_type) + ' ' + variable_name + ';\n'
     state_struct += declarations
     
     state_struct += '\n\texplicit ' + state_name + '(): '
@@ -144,14 +153,13 @@ def generate_state_struct_no_parameters(init_states, state_name, model):
     
     initializations = ''
     for variable_name, variable_type in state_variables:
-        value = initialization_values[variable_name]
+        value = translate_expression(initialization_values[variable_name])
 
         initializations += ' ' + variable_name + '(' + value + '), '
     
     state_struct += initializations.rstrip(', ')
     
     state_struct += ' {\n\t}\n};\n\n'
-    state_struct = replace_inf(state_struct)
     
     return state_struct  
 
@@ -195,10 +203,10 @@ def generate_bitshift_override_function(state_name, model):
     
 def generate_class(model_name, state_name, model):
     '''
-    #TODO confluent function is a later item
-    Returns the C++ class definition for the atomic model being generated.  This includes 
-    the port declarations, class constructor, internal transition function, external 
-    transition function, output function, and time advance function.
+    Returns the C++ class definition for the atomic model being generated.  This includes
+    the port declarations, class constructor, internal transition function, external
+    transition function, confluent transition function (only when delta_con defines one),
+    output function, and time advance function.
 
     Args:
         model_name (str):   The name of the atomic model being generated.
@@ -213,7 +221,7 @@ def generate_class(model_name, state_name, model):
     output_ports = model['y']
     delta_int = model['delta_int']
     delta_ext = model['delta_ext']
-    #delta_con = model['delta_con'] # not implemented
+    delta_con = model.get('delta_con')
     lambda_func = model['lambda'] # lambda is a python keyword and cannot be used
     ta = model['ta']
     
@@ -224,7 +232,7 @@ def generate_class(model_name, state_name, model):
     #print(ta)
     
     class_definition = 'class ' + model_name + ' : public Atomic<' + state_name + '> {\n'
-    class_definition += generate_port_declarations(input_ports, output_ports) + generate_class_constructor(model_name, state_name, input_ports, output_ports) + generate_internal_transition(state_name, delta_int, list_of_state_variables) + generate_external_transition(state_name, delta_ext, list_of_state_variables) + generate_output_function(state_name, lambda_func, list_of_state_variables) + generate_time_advance_function(state_name, ta, list_of_state_variables)
+    class_definition += generate_port_declarations(input_ports, output_ports) + generate_class_constructor(model_name, state_name, input_ports, output_ports) + generate_internal_transition(state_name, delta_int, list_of_state_variables) + generate_external_transition(state_name, delta_ext, list_of_state_variables) + generate_confluent_transition(state_name, delta_con, list_of_state_variables) + generate_output_function(state_name, lambda_func, list_of_state_variables) + generate_time_advance_function(state_name, ta, list_of_state_variables)
     class_definition += '};\n\n'
     
     return class_definition
@@ -236,7 +244,7 @@ def generate_port_declarations(input_ports, output_ports):
     # after implementing "constants"/DEVS parameters.
     NOTE: This function is intentionally inefficient for readability purposes.
 
-    Returns C++ code to declare all of the input and output ports for the atomic model being generated.
+    Returns C++ code to declare all of the input and output ports for the model (atomic or coupled) being generated.
     
     Args:
         input_ports (dict):     The DEVSMap dictionary data for the atomic model's input ports, 
@@ -248,12 +256,12 @@ def generate_port_declarations(input_ports, output_ports):
     # input ports
     port_declarations += '\t//input ports\n'
     for port_name in input_ports:
-        data_type = input_ports[port_name]
+        data_type = cpp_type(input_ports[port_name])
         port_declarations += '\tPort<' + data_type + '> ' + port_name + ';\n'
     # output ports
     port_declarations += '\n\t//output ports\n'
     for port_name in output_ports:
-        data_type = output_ports[port_name]
+        data_type = cpp_type(output_ports[port_name])
         port_declarations += '\tPort<' + data_type + '> ' + port_name + ';\n'
     return port_declarations + '\n'
 
@@ -270,21 +278,34 @@ def generate_class_constructor(model_name, state_name, input_ports, output_ports
         output_ports (dict):    The DEVSMap dictionary data for the atomic model's input ports, 
                                 given by model_name['y']
     '''   
-    port_initializations = '\t' + model_name + '(const std::string id) : Atomic<' + state_name + '>(id, ' + state_name + '()) {\n'
-    
+    constructor = '\t' + model_name + '(const std::string id, const ' + state_name + '& initialState) : Atomic<' + state_name + '>(id, initialState) {\n'
+    constructor += generate_port_registrations(input_ports, output_ports)
+    constructor += '\t}\n\n'
+    return constructor
+
+
+def generate_port_registrations(input_ports, output_ports):
+    '''
+    Returns the C++ constructor statements that register the input and output ports of a model
+    (atomic or coupled) with Cadmium.
+
+    Args:
+        input_ports (dict):     The DEVSMap dictionary data for the model's input ports,
+                                given by model_name['x']
+        output_ports (dict):    The DEVSMap dictionary data for the model's output ports,
+                                given by model_name['y']
+    '''
     # input ports
-    port_initializations += '\t\t//input ports\n'
+    port_initializations = '\t\t//input ports\n'
     for port_name in input_ports:
-        data_type = input_ports[port_name]
-        port_initializations += '\t\t' + port_name + ' = addInPort<' + data_type + '>("' + port_name + '");\n'    
-    
+        data_type = cpp_type(input_ports[port_name])
+        port_initializations += '\t\t' + port_name + ' = addInPort<' + data_type + '>("' + port_name + '");\n'
+
     # output ports
     port_initializations += '\n\t\t//output ports\n'
     for port_name in output_ports:
-        data_type = output_ports[port_name]
+        data_type = cpp_type(output_ports[port_name])
         port_initializations += '\t\t' + port_name + ' = addOutPort<' + data_type + '>("' + port_name + '");\n'
-    
-    port_initializations += '\t}\n\n'
     return port_initializations
 
 
@@ -302,14 +323,11 @@ def generate_internal_transition(state_name, delta_int, list_of_state_variables)
     internal_transition_function = '\tvoid internalTransition(' + state_name + '& state) const override {\n'
     internal_transition_function += build_conditional_statements(delta_int, list_of_state_variables)
     internal_transition_function += '\t}\n\n'
-    internal_transition_function = replace_inf(internal_transition_function)
     return internal_transition_function
 
 
 def generate_external_transition(state_name, delta_ext, list_of_state_variables):
     '''
-    # TODO refactor this to use a helper function, so it is structured like the generate_internal_transition() above
-
     Returns the external transition function for the atomic model being generated.
 
     Args:
@@ -320,36 +338,59 @@ def generate_external_transition(state_name, delta_ext, list_of_state_variables)
                                                 atomic_model['s'].items()
     '''
     external_transition_function = '\tvoid externalTransition(' + state_name + '& state, double e) const override {\n'
-    
-    conditional_statements = build_conditional_statements(delta_ext, list_of_state_variables)
-    external_transition_body = ''
-    
-    # Go through the if/else structure and convert JSON bag operators to the correct C++ functions and syntax
-    for line in conditional_statements.splitlines(True): # True keeps the linebreaks in
-        # remove tabs to check what the line starts with
-        templine = line.lstrip('\t')
-        # if the line is building the condition, we are making changes based on the bag size
-        if (templine.startswith('if') or templine.startswith('else if') or templine.startswith('else') or templine.startswith('{') or templine.startswith('}')):
-            # replaces "variable_name.bagSize() != 0" with !variable_name->empty()
-            line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) != 0', r'!\1->empty()', line)
-            # replaces "variable_name.bagSize() == 0" with variable_name->empty()
-            line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) == 0', r'\1->empty()', line)
-            external_transition_body += line            
-        # if the line is an instruction, we are making changes based on getting the last value from the bag
-        else:
-            # replaces "variablename.bag(-1)" with "variablename->getBag().back()"
-            line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\(-1\)', r'\1->getBag().back()', line)
-            external_transition_body += line
-            
-    external_transition_function += external_transition_body    
-    
+    external_transition_function += build_input_transition_body(delta_ext, list_of_state_variables)
     external_transition_function += '\t}\n\n'
     return external_transition_function
 
 
+def generate_confluent_transition(state_name, delta_con, list_of_state_variables):
+    '''
+    Returns the confluent transition function for the atomic model being generated, or nothing when
+    delta_con is missing or {"otherwise": {}}, so that Cadmium's default (the internal transition,
+    then the external transition) applies.
+
+    Args:
+        state_name (str):                       The name of the atomic model's state object.
+        delta_con (dict):                       The DEVSMap dictionary data for the confluent transition function,
+                                                given by model_name['delta_con']
+        list_of_state_variables (dict_items):   The list of state variables of the atomic model, returned by
+                                                atomic_model['s'].items()
+    '''
+    if not delta_con or delta_con == {'otherwise': {}}:
+        return ''
+    confluent_transition_function = '\tvoid confluentTransition(' + state_name + '& state, double e) const override {\n'
+    confluent_transition_function += build_input_transition_body(delta_con, list_of_state_variables)
+    confluent_transition_function += '\t}\n\n'
+    return confluent_transition_function
+
+
+def build_input_transition_body(data, list_of_state_variables):
+    '''
+    Returns the body of a transition function that reads input bags (external or confluent),
+    with the JSON bag operators converted to the correct C++ functions and syntax.
+
+    Args:
+        data (dict):                            The DEVSMap dictionary data for the transition function.
+        list_of_state_variables (dict_items):   The list of state variables of the atomic model, returned by
+                                                atomic_model['s'].items()
+    '''
+    body = build_conditional_statements(data, list_of_state_variables)
+    # replaces "variable_name.bagSize() != 0" with !variable_name->empty()
+    body = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) != 0', r'!\1->empty()', body)
+    # replaces "variable_name.bagSize() == 0" with variable_name->empty()
+    body = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) == 0', r'\1->empty()', body)
+    # bag values can be read in conditions as well as in assignments
+    # replaces "variablename.bag(-1)" with "variablename->getBag().back()"
+    body = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\(-1\)', r'\1->getBag().back()', body)
+    # replaces "variablename.bag(i)" for a non-negative integer i with "variablename->getBag()[i]"
+    body = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\((\d+)\)', r'\1->getBag()[\2]', body)
+    return body
+
+
 def generate_output_function(state_name, lambda_func, list_of_state_variables):
     '''
-    Returns the output function for the atomic model being generated.
+    Returns the output function for the atomic model being generated.  An output port's value
+    is one expression (one message) or a list of expressions (one message each, in list order).
 
     Args:
         state_name (str):                       The name of the atomic model's state object.

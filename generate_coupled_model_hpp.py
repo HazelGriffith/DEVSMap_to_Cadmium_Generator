@@ -1,6 +1,8 @@
 # TODO module comments
 
 from generate_simple_statements import generate_file_definition, cadmium_namespace
+from generate_atomic_model_hpp import get_state_name, generate_port_declarations, generate_port_registrations
+from helper import translate_expression
 
 
 def generate_coupled_models(directory_cpp_code, data):
@@ -15,16 +17,18 @@ def generate_coupled_models(directory_cpp_code, data):
     for i in range(number_of_coupled_models):
         coupled_model_name = list(data['coupled_models'][i].keys())[0]
         coupled_model = data['coupled_models'][i][coupled_model_name]
-        generate_coupled_model(directory_cpp_code, coupled_model_name, coupled_model)
+        generate_coupled_model(directory_cpp_code, data['init_states'], coupled_model_name, coupled_model)
 
 
 
-def generate_coupled_model(directory, coupled_model_name, coupled_model):
+def generate_coupled_model(directory, init_states, coupled_model_name, coupled_model):
     '''
     Creates a .hpp file in directory, and generates the C++ code for the coupled model within that file.
 
     Args:
         directory (str):            The output directory to place the .hpp file.
+        init_states (dict):         The DEVSMap dictionary init states data for all models.
+                                    Given by data['init_states'].
         coupled_model_name (str):   The name of the coupled model, which will also be the name of the .hpp file.
         coupled_model (dict):       The DEVSMap data of the coupled model to generate the C++ code from.
     '''
@@ -34,7 +38,7 @@ def generate_coupled_model(directory, coupled_model_name, coupled_model):
         file.write(include_cadmium_coupled())
         file.write(include_component_models(coupled_model))
         file.write(cadmium_namespace())
-        file.write(generate_coupled_model_struct(coupled_model_name, coupled_model))
+        file.write(generate_coupled_model_struct(init_states, coupled_model_name, coupled_model))
         file.write('#endif')
     file.close()     
     
@@ -73,35 +77,75 @@ def include_component_models(coupled_model):
     return include_statements
 
 
-def generate_coupled_model_struct(model_name, model):
+def generate_coupled_model_struct(init_states, model_name, model):
     '''
-    Returns the C++ struct for a coupled model in Cadmium. The struct contains component declarations 
-    and internal coupling between the coupled model's atomic models.
+    Returns the C++ struct for a coupled model in Cadmium. The struct contains the coupled model's ports,
+    component declarations, and the external input, external output and internal couplings.
 
     Args:
+        init_states (dict): The DEVSMap dictionary init states data for all models.
+                            Given by data['init_states'].
         model_name (str):   The name of the coupled model being generated.
         model (dict):       The data of the coupled model being generated.
     '''
     constructor = ''
     
     # struct header
-    constructor += 'struct ' + model_name + ' : public Coupled {\n\n'
+    constructor += 'struct ' + model_name + ' : public Coupled {\n'
+    constructor += generate_port_declarations(model['x'], model['y'])
     constructor += '\t' + model_name + '(const std::string& id) : Coupled(id) {\n'
+    constructor += generate_port_registrations(model['x'], model['y']) + '\n'
 
     # addComponent statements
     components = get_components(model)
+    component_init_states = init_states[model_name]
     component_statements = ''
-    for model_name, model_id in components.items():
-        component_statements += '\t\tauto ' + model_id + ' = addComponent<' + model_name + '>("' + model_id + '");\n'
+    for model_name, model_ids in components.items():
+        # an atomic model used more than once lists all of its ids
+        if isinstance(model_ids, str):
+            model_ids = [model_ids]
+        for model_id in model_ids:
+            component_statements += generate_component_state(model_name, model_id, component_init_states[model_id])
+            component_statements += '\t\tauto ' + model_id + ' = addComponent<' + model_name + '>("' + model_id + '", ' + model_id + '_state);\n'
     constructor += component_statements + '\n'
         
     #addCoupling statements
     coupling_statements = ''
+    for coupling in model['eic']:
+        coupling_statements += generate_coupling(coupling['port_from'], coupling['component_to'] + '->' + coupling['port_to'])
+    for coupling in model['eoc']:
+        coupling_statements += generate_coupling(coupling['component_from'] + '->' + coupling['port_from'], coupling['port_to'])
     for coupling in model['ic']:
-        coupling_statements += '\t\taddCoupling(' + coupling['component_from'] + '->' + coupling['port_from'] + ', ' + coupling['component_to'] + '->' + coupling['port_to'] + ');\n'
+        coupling_statements += generate_coupling(coupling['component_from'] + '->' + coupling['port_from'], coupling['component_to'] + '->' + coupling['port_to'])
     constructor += coupling_statements
     
     # close struct
     constructor += '\t}\n};\n\n'
-    
+
     return constructor
+
+
+def generate_coupling(port_from, port_to):
+    '''
+    Returns the C++ statement that couples port_from to port_to. A port of the coupled model
+    itself is its bare name; a port of a component is "component->port".
+    '''
+    return '\t\taddCoupling(' + port_from + ', ' + port_to + ');\n'
+
+
+def generate_component_state(model_name, model_id, init_state):
+    '''
+    Returns C++ statements that declare the initial state of one component, so that
+    each instance of an atomic model starts from its own values in the init_state file.
+
+    Args:
+        model_name (str):   The name of the component's atomic model.
+        model_id (str):     The id of the component.
+        init_state (dict):  The component's initialization values, given by
+                            data['init_states'][coupled_model_name][model_id].
+    '''
+    state_variable = model_id + '_state'
+    statements = '\t\t' + get_state_name(model_name) + ' ' + state_variable + ';\n'
+    for variable_name, value in init_state.items():
+        statements += '\t\t' + state_variable + '.' + variable_name + ' = ' + translate_expression(value) + ';\n'
+    return statements
