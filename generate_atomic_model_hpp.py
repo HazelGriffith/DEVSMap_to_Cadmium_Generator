@@ -354,23 +354,16 @@ def build_input_transition_body(data, list_of_state_variables):
         list_of_state_variables (dict_items):   The list of state variables of the atomic model, returned by
                                                 atomic_model['s'].items()
     '''
-    body = ''
-    for line in build_conditional_statements(data, list_of_state_variables).splitlines(True): # True keeps the linebreaks in
-        # remove tabs to check what the line starts with
-        templine = line.lstrip('\t')
-        # if the line is building the condition, we are making changes based on the bag size
-        if (templine.startswith('if') or templine.startswith('else if') or templine.startswith('else') or templine.startswith('{') or templine.startswith('}')):
-            # replaces "variable_name.bagSize() != 0" with !variable_name->empty()
-            line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) != 0', r'!\1->empty()', line)
-            # replaces "variable_name.bagSize() == 0" with variable_name->empty()
-            line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) == 0', r'\1->empty()', line)
-        # if the line is an instruction, we are making changes based on getting the last value from the bag
-        else:
-            # replaces "variablename.bag(-1)" with "variablename->getBag().back()"
-            line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\(-1\)', r'\1->getBag().back()', line)
-            # replaces "variablename.bag(i)" for a non-negative integer i with "variablename->getBag()[i]"
-            line = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\((\d+)\)', r'\1->getBag()[\2]', line)
-        body += line
+    body = build_conditional_statements(data, list_of_state_variables)
+    # replaces "variable_name.bagSize() != 0" with !variable_name->empty()
+    body = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) != 0', r'!\1->empty()', body)
+    # replaces "variable_name.bagSize() == 0" with variable_name->empty()
+    body = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bagSize\(\) == 0', r'\1->empty()', body)
+    # bag values can be read in conditions as well as in assignments
+    # replaces "variablename.bag(-1)" with "variablename->getBag().back()"
+    body = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\(-1\)', r'\1->getBag().back()', body)
+    # replaces "variablename.bag(i)" for a non-negative integer i with "variablename->getBag()[i]"
+    body = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.bag\((\d+)\)', r'\1->getBag()[\2]', body)
     return body
 
 
