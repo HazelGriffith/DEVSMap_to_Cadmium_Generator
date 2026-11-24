@@ -157,10 +157,26 @@ def translate_map(data, list_of_state_variables):
     '''
     return {
         key if key == 'otherwise' else translate_expression(key, list_of_state_variables):
-        translate_map(value, list_of_state_variables) if isinstance(value, dict)
-        else translate_expression(value, list_of_state_variables)
+        translate_value(value, list_of_state_variables)
         for key, value in data.items()
     }
+
+
+def translate_value(value, list_of_state_variables):
+    '''
+    Returns a value of a DEVSMap condition map translated to C++: a nested map by translate_map(),
+    a list (several messages on one output port) element by element, and an expression by
+    translate_expression().
+
+    Args:
+        value (dict, list or str):              The DEVSMap value to translate.
+        list_of_state_variables (list):         The state variable names of the atomic model.
+    '''
+    if isinstance(value, dict):
+        return translate_map(value, list_of_state_variables)
+    if isinstance(value, list):
+        return [translate_expression(element, list_of_state_variables) for element in value]
+    return translate_expression(value, list_of_state_variables)
 
 
 def build_conditional_statements(data, list_of_state_variables):
@@ -207,15 +223,18 @@ def build_conditional_statements(data, list_of_state_variables):
     return conditional_statements
 
 
-def simple_conditional_statement(key, value):
+def simple_conditional_statement(key, value, indent=2):
     '''
     Returns an assignment statement in C++ syntax that assigns value to a variable named key.
+    A list value (several messages on one output port) gives one statement per element, in order.
 
     Args:
-        key (str):      The state variable being assigned.
-        value (str):    The value to assign to the state variable.
+        key (str):              The state variable being assigned.
+        value (str or list):    The value to assign to the state variable.
+        indent (int):           The number of indentations.
     '''
-    return '\t\t' + key + ' = ' + value + ';\n'
+    values = value if isinstance(value, list) else [value]
+    return ''.join('\t' * indent + key + ' = ' + element + ';\n' for element in values)
 
 
 # Recursive function to write conditional blocks based on nested JSON structure
@@ -254,13 +273,13 @@ def build_conditional_statements_helper(data, indent=2):
             # If all values are non-dictionaries, write assignments
             if all(not isinstance(v, dict) for v in value.values()):
                 for var, expr in value.items():
-                    conditions += INDENT * (indent + 1) + var + ' = ' + expr +';\n'
+                    conditions += simple_conditional_statement(var, expr, indent + 1)
             else:
                 # Otherwise, recursively handle nested conditions
                 conditions += write_conditions(value, indent + 1)
         else:
             # Single assignment if value is not a dict
-            conditions += INDENT * (indent + 1) + key + ' = ' + value + ';\n'
+            conditions += simple_conditional_statement(key, value, indent + 1)
 
         # Write the block closing brace
         if i < len(keys) - 1:

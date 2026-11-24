@@ -389,7 +389,8 @@ def build_input_transition_body(data, list_of_state_variables):
 
 def generate_output_function(state_name, lambda_func, list_of_state_variables):
     '''
-    Returns the output function for the atomic model being generated.
+    Returns the output function for the atomic model being generated.  An output port's value
+    is one expression (one message) or a list of expressions (one message each, in list order).
 
     Args:
         state_name (str):                       The name of the atomic model's state object.
